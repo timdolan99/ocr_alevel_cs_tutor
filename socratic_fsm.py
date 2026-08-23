@@ -98,17 +98,14 @@ def didactic_fallback(state: ChatState) -> dict:
 
 
 def route_turn(state: ChatState) -> str:
-    # Priority 1: Check explicit state flags passed from app.py
-    if state.get("is_final_turn", False) or state.get("turn_count", 0) >= 7:
+    # Guarantee fallback routing on Turn 7
+    if state.get("is_final_turn") or state.get("turn_count", 0) >= 7:
         return "didactic_fallback"
 
-    # Priority 2: Robust string-based message type counting
     messages = state.get("messages", [])
     human_count = 0
     for m in messages:
-        msg_type = getattr(m, "type", None)
-        class_name = m.__class__.__name__
-        if msg_type == "human" or "Human" in class_name:
+        if getattr(m, "type", "") == "human" or "Human" in type(m).__name__ or (isinstance(m, dict) and m.get("role") in ["student", "user", "human"]):
             human_count += 1
 
     if human_count >= 7:
