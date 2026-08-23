@@ -9,8 +9,11 @@ from langchain_core.messages import HumanMessage, AIMessage
 import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-# Checks Streamlit Secrets first, then falls back to Azure Environment Variables
-api_key = st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+# Safe key retrieval across Streamlit Cloud and Azure Container Apps
+if "GOOGLE_API_KEY" in st.secrets:
+    api_key = st.secrets["GOOGLE_API_KEY"]
+else:
+    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
 
 llm = ChatGoogleGenerativeAI(
     model="gemini-3.6-flash",
