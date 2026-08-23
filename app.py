@@ -6,6 +6,17 @@ importlib.reload(socratic_fsm)
 from socratic_fsm import workflow
 from langchain_core.messages import HumanMessage, AIMessage
 
+import os
+from langchain_google_genai import ChatGoogleGenerativeAI
+
+# Checks Streamlit Secrets first, then falls back to Azure Environment Variables
+api_key = st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+
+llm = ChatGoogleGenerativeAI(
+    model="gemini-3.6-flash",
+    google_api_key=api_key
+)
+
 # --- Helper 1: Text Extractor ---
 def extract_clean_text(response) -> str:
     """Extracts plain text response from Gemini output structures."""

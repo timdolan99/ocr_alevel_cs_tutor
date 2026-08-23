@@ -3,7 +3,6 @@ langchain-core
 langchain-chroma
 langchain-google-genai
 langgraph
+chromadb
 pypdf
 pydantic
-torch
-torchvision

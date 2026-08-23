@@ -6,6 +6,18 @@ from langchain_chroma import Chroma
 from langgraph.graph import StateGraph, END
 
 
+import streamlit as st
+from langchain_google_genai import ChatGoogleGenerativeAI
+
+# Retrieve key safely across Streamlit Cloud & Azure
+api_key = st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+
+llm = ChatGoogleGenerativeAI(
+    model="gemini-3.6-flash",
+    google_api_key=api_key
+)
+
+
 class ChatState(TypedDict, total=False):
     messages: List[BaseMessage]
     sub_topic: str
@@ -35,7 +47,7 @@ def socratic_tutor(state: ChatState) -> dict:
 
     Guide the student step-by-step using probing questions and constructive hints. Never give away full answers directly."""
 
-    llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash")
+    #llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash")
     messages_to_send = [HumanMessage(content=system_prompt)] + list(state["messages"])
     response = llm.invoke(messages_to_send)
 
@@ -88,7 +100,7 @@ def didactic_fallback(state: ChatState) -> dict:
 
     CRITICAL RULE: DO NOT ask any follow-up questions anywhere in your response. Conclude cleanly."""
 
-    llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash")
+    #llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash")
     messages_to_send = [HumanMessage(content=system_prompt)] + list(state["messages"])
     response = llm.invoke(messages_to_send)
 
