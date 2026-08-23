@@ -5,3 +5,5 @@ langchain-google-genai
 langgraph
 pypdf
 pydantic
+torch
+torchvision
