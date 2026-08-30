@@ -5,7 +5,6 @@ from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmb
 from langchain_chroma import Chroma
 from langgraph.graph import StateGraph, END
 
-
 import streamlit as st
 from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -39,49 +38,46 @@ def get_context(sub_topic: str, user_query: str) -> str:
         return "\n\n".join([doc.page_content for doc in results]) if results else ""
     except Exception:
         return "No specific syllabus context found."
-
+    
 
 def socratic_tutor(state: ChatState) -> dict:
-    sub_topic = state.get("sub_topic", "OCR A-Level Computer Science")
+    sub_topic = state.get("sub_topic", "Selected Syllabus Topic")
     user_query = state["messages"][-1].content if state.get("messages") else ""
     context = get_context(sub_topic, user_query)
 
-    system_prompt = f"""You are an expert Socratic OCR A-Level Computer Science Tutor.
-    Topic Focus: {sub_topic}
+    # Completely subject-agnostic system prompt
+    system_prompt = f"""You are an expert Socratic tutor specializing in: {sub_topic}.
     Syllabus Context:
     {context}
 
     Guide the student step-by-step using probing questions and constructive hints. Never give away full answers directly."""
 
-    #llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash")
     messages_to_send = [HumanMessage(content=system_prompt)] + list(state["messages"])
     response = llm.invoke(messages_to_send)
 
-    return {
-        "messages": state["messages"] + [response]
-    }
+    return {"messages": state["messages"] + [response]}
 
 
 def didactic_fallback(state: ChatState) -> dict:
-    sub_topic = state.get("sub_topic", "")
+    sub_topic = state.get("sub_topic", "Selected Syllabus Topic")
     user_query = state["messages"][-1].content if state.get("messages") else ""
     context = get_context(sub_topic, user_query)
 
-    system_prompt = f"""You are a strict Cambridge OCR A-Level Computer Science Senior Examiner wrapping up a Socratic revision session.
-    Topic Focus: {sub_topic}
+    # Completely subject-agnostic examiner prompt
+    system_prompt = f"""You are a strict Senior Examiner wrapping up a Socratic revision session for: {sub_topic}.
     Syllabus Context:
     {context}
 
     STRICT FORMATTING & LATEX RULES:
-    - NEVER use LaTeX math delimiters like $, $$, \\(, or \\). Write all complexity, matrices, and variables in plain text or Markdown bold/code (e.g., O(V^2), O(1), 1000 x 1000).
+    - NEVER use LaTeX math delimiters like $, $$, \\(, or \\). Write all complexity, matrices, and variables in plain text or Markdown bold/code.
 
-    STRICT OCR MARKING RUBRIC:
-    - 80–100%: Accurate concepts AND precise OCR specification keywords used consistently throughout.
+    STRICT MARKING RUBRIC:
+    - 80–100%: Accurate concepts AND precise specification keywords used consistently throughout.
     - 50–79%: Conceptually sound, but relies on informal/layperson language instead of required exam terms.
     - Below 50%: Vague explanations, partial misconceptions, or missing core terminology.
 
     INSTRUCTIONS FOR SESSION ENDING:
-    1. **Validate Final Answer:** Directly validate the student's final input in detail first. If code/pseudocode was discussed, include the full exam-standard corrected solution.
+    1. **Validate Final Answer:** Directly validate the student's final input in detail first. If applicable, include the full exam-standard corrected solution.
     2. **Performance Assessment:** Apply the rubric above, list technical terms used well vs. missed across the dialogue, give 1–2 targeted feedback points, and recommend next sub-topics.
     3. **Structured Summary Note:** Provide a clean, comprehensive topic summary data drop.
 
@@ -106,25 +102,27 @@ def didactic_fallback(state: ChatState) -> dict:
 
     CRITICAL RULE: DO NOT ask any follow-up questions anywhere in your response. Conclude cleanly."""
 
-    #llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash")
     messages_to_send = [HumanMessage(content=system_prompt)] + list(state["messages"])
     response = llm.invoke(messages_to_send)
 
-    return {
-        "messages": state["messages"] + [response]
-    }
+    return {"messages": state["messages"] + [response]}
 
 
 def route_turn(state: ChatState) -> str:
-    # Guarantee fallback routing on Turn 7
+    # 1. Direct flags from state
     if state.get("is_final_turn") or state.get("turn_count", 0) >= 7:
         return "didactic_fallback"
 
+    # 2. Count human/student messages robustly
     messages = state.get("messages", [])
     human_count = 0
     for m in messages:
-        if getattr(m, "type", "") == "human" or "Human" in type(m).__name__ or (isinstance(m, dict) and m.get("role") in ["student", "user", "human"]):
-            human_count += 1
+        if isinstance(m, dict):
+            if m.get("role") in ["student", "user", "human"]:
+                human_count += 1
+        else:
+            if getattr(m, "type", "") == "human" or "Human" in type(m).__name__:
+                human_count += 1
 
     if human_count >= 7:
         return "didactic_fallback"
