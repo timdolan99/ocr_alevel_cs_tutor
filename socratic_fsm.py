@@ -1,26 +1,22 @@
-import os
+import os, json
 from typing import TypedDict, List
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from langgraph.graph import StateGraph, END
 
-import streamlit as st
-from langchain_google_genai import ChatGoogleGenerativeAI
+# --- Load dynamic course specification ---
+SPEC_PATH = "course_spec.json"
+if os.path.exists(SPEC_PATH):
+    with open(SPEC_PATH, "r", encoding="utf-8") as f:
+        COURSE_SPEC = json.load(f)
+else:
+    COURSE_SPEC = {}
 
-# Safe key retrieval across Streamlit Cloud and Azure Container Apps
-api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-
-if not api_key:
-    try:
-        api_key = st.secrets.get("GOOGLE_API_KEY")
-    except Exception:
-        pass
-
-llm = ChatGoogleGenerativeAI(
-    model="gemini-3.6-flash",
-    google_api_key=api_key
-)
+COURSE_TITLE = COURSE_SPEC.get("course_title", "General Subject")
+LEVEL = COURSE_SPEC.get("level", "GCSE/A-Level")
+TARGET_TURNS = COURSE_SPEC.get("target_turns", 5)
 
 
 class ChatState(TypedDict, total=False):
@@ -32,52 +28,59 @@ class ChatState(TypedDict, total=False):
 
 def get_context(sub_topic: str, user_query: str) -> str:
     try:
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
         db = Chroma(persist_directory="./chroma_db", embedding_function=embeddings)
-        results = db.similarity_search(user_query, k=3, filter={"sub_topic": sub_topic})
+        results = db.similarity_search(user_query, k=3)
         return "\n\n".join([doc.page_content for doc in results]) if results else ""
     except Exception:
         return "No specific syllabus context found."
-    
+
 
 def socratic_tutor(state: ChatState) -> dict:
-    sub_topic = state.get("sub_topic", "Selected Syllabus Topic")
+    sub_topic = state.get("sub_topic", COURSE_TITLE)
     user_query = state["messages"][-1].content if state.get("messages") else ""
     context = get_context(sub_topic, user_query)
 
-    # Completely subject-agnostic system prompt
-    system_prompt = f"""You are an expert Socratic tutor specializing in: {sub_topic}.
+    system_prompt = f"""You are an expert Socratic {COURSE_TITLE} ({LEVEL}) Tutor.
+    Topic Focus: {sub_topic}
     Syllabus Context:
     {context}
 
     Guide the student step-by-step using probing questions and constructive hints. Never give away full answers directly."""
 
-    messages_to_send = [HumanMessage(content=system_prompt)] + list(state["messages"])
+    llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash")
+    messages_to_send = [SystemMessage(content=system_prompt)] + list(state["messages"])
     response = llm.invoke(messages_to_send)
 
-    return {"messages": state["messages"] + [response]}
+    return {
+        "messages": state["messages"] + [response]
+    }
 
 
 def didactic_fallback(state: ChatState) -> dict:
-    sub_topic = state.get("sub_topic", "Selected Syllabus Topic")
+    sub_topic = state.get("sub_topic", "")
     user_query = state["messages"][-1].content if state.get("messages") else ""
     context = get_context(sub_topic, user_query)
 
-    # Completely subject-agnostic examiner prompt
-    system_prompt = f"""You are a strict Senior Examiner wrapping up a Socratic revision session for: {sub_topic}.
+    system_prompt = f"""You are a strict {COURSE_TITLE} ({LEVEL}) Senior Examiner wrapping up a Socratic revision session.
+    Topic Focus: {sub_topic}
     Syllabus Context:
     {context}
+
+    CRITICAL MANDATE: This is the FINAL turn. You MUST NOT ask any follow-up questions. Conclude immediately and provide the performance assessment and summary card.
 
     STRICT FORMATTING & LATEX RULES:
     - NEVER use LaTeX math delimiters like $, $$, \\(, or \\). Write all complexity, matrices, and variables in plain text or Markdown bold/code.
 
-    STRICT MARKING RUBRIC:
-    - 80–100%: Accurate concepts AND precise specification keywords used consistently throughout.
-    - 50–79%: Conceptually sound, but relies on informal/layperson language instead of required exam terms.
-    - Below 50%: Vague explanations, partial misconceptions, or missing core terminology.
+    OBJECTIVE MARKING RUBRIC:
+    1. Base accuracy strictly on exact specification keyword hit-rate derived from the Syllabus Context.
+    2. Ignore Setup Words: Do not count the initial topic name chosen by the student as a keyword hit.
+    3. Strict Terminology: Only credit official domain terms found in the context. Layperson words get 0% keyword credit.
+    4. Misconception Penalty: Cap the overall score at 20% maximum if the student expresses a fundamental factual error.
+
 
     INSTRUCTIONS FOR SESSION ENDING:
-    1. **Validate Final Answer:** Directly validate the student's final input in detail first. If applicable, include the full exam-standard corrected solution.
+    1. **Validate Final Answer:** Directly validate the student's final input in detail first.
     2. **Performance Assessment:** Apply the rubric above, list technical terms used well vs. missed across the dialogue, give 1–2 targeted feedback points, and recommend next sub-topics.
     3. **Structured Summary Note:** Provide a clean, comprehensive topic summary data drop.
 
@@ -102,29 +105,28 @@ def didactic_fallback(state: ChatState) -> dict:
 
     CRITICAL RULE: DO NOT ask any follow-up questions anywhere in your response. Conclude cleanly."""
 
-    messages_to_send = [HumanMessage(content=system_prompt)] + list(state["messages"])
+    # DYNAMIC FIX:
+    final_command = HumanMessage(   
+    content=f"[SYSTEM DIRECTIVE: This is turn {TARGET_TURNS} (FINAL TURN). Do NOT ask any follow-up questions. Provide the final answer validation, performance evaluation, the exact ===SPLIT=== delimiter, and topic summary now.]"
+    )
+
+    llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash")
+    messages_to_send = [SystemMessage(content=system_prompt)] + list(state["messages"]) + [final_command]
     response = llm.invoke(messages_to_send)
 
-    return {"messages": state["messages"] + [response]}
+    return {
+        "messages": state["messages"] + [response]
+    }
 
 
 def route_turn(state: ChatState) -> str:
-    # 1. Direct flags from state
-    if state.get("is_final_turn") or state.get("turn_count", 0) >= 7:
+    if state.get("is_final_turn", False) or state.get("turn_count", 0) >= TARGET_TURNS:
         return "didactic_fallback"
 
-    # 2. Count human/student messages robustly
     messages = state.get("messages", [])
-    human_count = 0
-    for m in messages:
-        if isinstance(m, dict):
-            if m.get("role") in ["student", "user", "human"]:
-                human_count += 1
-        else:
-            if getattr(m, "type", "") == "human" or "Human" in type(m).__name__:
-                human_count += 1
+    human_count = sum(1 for m in messages if getattr(m, "type", None) == "human" or "Human" in m.__class__.__name__ or isinstance(m, HumanMessage))
 
-    if human_count >= 7:
+    if human_count >= TARGET_TURNS:
         return "didactic_fallback"
 
     return "socratic_tutor"
