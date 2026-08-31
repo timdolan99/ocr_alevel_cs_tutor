@@ -148,3 +148,97 @@ builder.add_edge("socratic_tutor", END)
 builder.add_edge("didactic_fallback", END)
 
 workflow = builder.compile()
+
+# retrieval quiz
+
+import json
+import re
+
+# --- Helper to extract pure string text from LangChain responses ---
+def extract_clean_text(response) -> str:
+  if isinstance(response, str):
+    return response
+  if hasattr(response, "content"):
+    return extract_clean_text(response.content)
+  if isinstance(response, list) and len(response) > 0:
+    first_item = response[0]
+    if isinstance(first_item, dict):
+      return first_item.get("text", str(first_item))
+    elif hasattr(first_item, "text"):
+      return first_item.text
+    return extract_clean_text(first_item)
+  if isinstance(response, dict):
+    if "text" in response:
+      return response["text"]
+    elif "content" in response:
+      return extract_clean_text(response["content"])
+  return str(response)
+
+
+# --- Retrieval Quiz Functions ---
+def generate_quiz_questions(
+    sub_topic: str, course_title: str, level: str
+) -> list:
+  context = get_context(sub_topic, sub_topic)
+  prompt = f"""You are an expert OCR {course_title} ({level}) Senior Examiner.
+Topic Focus: {sub_topic}
+Syllabus Context:
+{context}
+
+Generate exactly 10 short-answer exam questions testing precise definitions and technical terminology for this subtopic.
+Output ONLY a valid JSON array of 10 question strings, with no additional text or formatting:
+["Question 1 text...", "Question 2 text...", ...]"""
+
+  llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash", temperature=0.3)
+  response = llm.invoke([HumanMessage(content=prompt)])
+
+  raw_text = extract_clean_text(response)
+  clean_text = re.sub(r"```json|```", "", raw_text).strip()
+  return json.loads(clean_text)
+
+
+def grade_quiz_responses(
+    sub_topic: str, questions: list, answers: dict, course_title: str, level: str
+) -> dict:
+  context = get_context(sub_topic, sub_topic)
+  qa_pairs = "\n".join([
+      f"Q{i+1}: {q}\nStudent Answer: {answers.get(i, 'No answer provided')}\n"
+      for i, q in enumerate(questions)
+  ])
+
+  prompt = f"""You are a strict OCR {course_title} ({level}) Senior Examiner grading a 10-question retrieval quiz.
+Topic Focus: {sub_topic}
+Syllabus Context:
+{context}
+
+STRICT MARKING RUBRIC:
+- Base accuracy strictly on exact OCR specification keywords derived from Syllabus Context.
+- Award 1 mark per question ONLY if exact domain terms are present. Layperson terms get 0 marks.
+- Provide concise, actionable feedback focusing on missing exam terminology.
+
+Return your assessment strictly as a single JSON object with no extra commentary:
+{{
+  "total_score": 8,
+  "breakdown": [
+    {{
+      "question_num": 1,
+      "question": "Question text...",
+      "student_answer": "Student text...",
+      "score": 1,
+      "model_answer": "Model specification definition...",
+      "keywords_used": ["Term 1"],
+      "keywords_missed": ["Term 2"],
+      "explanation": "Short sentence explaining mark allocation..."
+    }}
+  ]
+}}
+
+Student Submission:
+{qa_pairs}"""
+
+  llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash", temperature=0)
+  response = llm.invoke([HumanMessage(content=prompt)])
+
+  raw_text = extract_clean_text(response)
+  clean_text = re.sub(r"```json|```", "", raw_text).strip()
+  return json.loads(clean_text)
