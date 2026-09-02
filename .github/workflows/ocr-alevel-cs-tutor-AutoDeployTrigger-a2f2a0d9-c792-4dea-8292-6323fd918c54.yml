@@ -34,5 +34,8 @@ jobs:
           appSourcePath: ${{ github.workspace }}
           containerAppName: ocr-alevel-cs-tutor
           resourceGroup: socratic-tutor-rg
+          acrName: ca3171a2918aacr
+          acrUsername: ca3171a2918aacr
+          acrPassword: 5Lhp1LZmxbgU9wawCsFNi4FIcfHFIvX9eXjb1uW0mbbIEcomxy9FJQQJ99CHACYeBjFEqg7NAAACAZCRxzAq
           ingress: external
           targetPort: 8501
